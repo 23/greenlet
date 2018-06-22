@@ -9,30 +9,38 @@ export default function greenlet(asyncFunction) {
 	// Outward-facing promises store their "controllers" (`[request, reject]`) here:
 	const promises = {};
 
-	// Create an "inline" worker (1:1 at definition time)
-	const worker = new Worker(
-		// Use a data URI for the worker's src. It inlines the target function and an RPC handler:
-		'data:,$$='+asyncFunction+';onmessage='+(e => {
-			/* global $$ */
+	const func = '$$='+asyncFunction+';onmessage='+(e => {
+    /* global $$ */
 
-			// Invoking within then() captures exceptions in the supplied async function as rejections
-			Promise.resolve(e.data[1]).then(
-				v => $$.apply($$, v)
-			).then(
-				// success handler - callback(id, SUCCESS(0), result)
-				// if `d` is transferable transfer zero-copy
-				d => {
-					postMessage([e.data[0], 0, d], [d].filter(x => (
-						(x instanceof ArrayBuffer) ||
-						(x instanceof MessagePort) ||
-						(x instanceof ImageBitmap)
-					)));
-				},
-				// error handler - callback(id, ERROR(1), error)
-				er => { postMessage([e.data[0], 1, '' + er]); }
-			);
-		})
-	);
+    // Invoking within then() captures exceptions in the supplied async function as rejections
+    Promise.resolve(e.data[1]).then(
+      v => $$.apply($$, v)
+    ).then(
+      // success handler - callback(id, SUCCESS(0), result)
+      // if `d` is transferable transfer zero-copy
+      d => {
+        postMessage([e.data[0], 0, d], [d].filter(x => (
+          (x instanceof ArrayBuffer) ||
+          (x instanceof MessagePort) ||
+          (x instanceof ImageBitmap)
+        )));
+      },
+      // error handler - callback(id, ERROR(1), error)
+      er => { postMessage([e.data[0], 1, '' + er]); }
+    );
+  });
+
+	// Create an "inline" worker (1:1 at definition time)
+  let blob;
+  try {
+    blob = new Blob([func], { type: 'application/javascript' });
+  } catch (e) { // Backwards-compatibility
+    window.BlobBuilder = window.BlobBuilder || window.WebKitBlobBuilder || window.MozBlobBuilder;
+    blob = new BlobBuilder();
+    blob.append(func);
+    blob = blob.getBlob();
+  }
+  const worker = new Worker(URL.createObjectURL(blob));
 
 	/** Handle RPC results/errors coming back out of the worker.
 	 *  Messages coming from the worker take the form `[id, status, result]`:
